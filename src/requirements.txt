@@ -13,8 +13,6 @@ kaggle==1.6.14
 kagglehub
 kagglesdk
 bs4
-scikit-surprise
-
 kagglehub
 
 streamlit>=1.35.0
