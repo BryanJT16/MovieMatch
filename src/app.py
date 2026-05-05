@@ -1,6 +1,7 @@
 import streamlit as st
 
 import pandas as pd
+import os
 
 import pickle
 
@@ -31,12 +32,22 @@ st.markdown("### Encuentra tu próxima película favorita")
 @st.cache_data
 def cargar_datos():
     try:
+        # 1. Obtener la ruta absoluta de la carpeta donde está "app.py" (ej. .../MovieMatch/src/)
+        dir_actual = os.path.dirname(os.path.abspath(__file__))
+        
+        # 2. Subir un nivel para llegar a la raíz (ej. .../MovieMatch/)
+        raiz_proyecto = os.path.abspath(os.path.join(dir_actual, ".."))
+        
+        # 3. Construir las rutas exactas sin importar el sistema operativo (Windows/Linux)
+        ruta_modelo = os.path.join(raiz_proyecto, "models", "rotten_pipeline.pkl")
+        ruta_movies = os.path.join(raiz_proyecto, "src/dataset", "movies.csv")
+        
         # Cargar el pipeline
-        with open("models/rotten_pipeline.pkl", "rb") as f:
+        with open(ruta_modelo, "rb") as f:
             pipeline = pickle.load(f)
         
         # Cargar el dataset de películas
-        movies = pd.read_csv("data/processed/movies.csv")
+        movies = pd.read_csv(ruta_movies)
         
         return pipeline, movies
     except Exception as e:
@@ -106,7 +117,8 @@ if pipeline is not None and movies is not None:
         # Dividir por coma y limpiar cada actor
         actors = [actor.strip() for actor in actors_str.split(",") if actor.strip()]
         all_actors.update(actors)
-    unique_actors = sorted(list(all_actors))  # Convertir a lista ordenada
+    unique_actors = sorted(list(all_actors))        # Lista ordenada
+    unique_actors.insert(0, "Todos")
     
     # Procesar directores
     all_directors = set()  # Usamos set para evitar duplicados desde el inicio
@@ -116,18 +128,37 @@ if pipeline is not None and movies is not None:
         # Dividir por coma y limpiar cada director
         directors = [director.strip() for director in directors_str.split(",") if director.strip()]
         all_directors.update(directors)
-    unique_directors = sorted(list(all_directors))  # Convertir a lista ordenada
+        
+    unique_directors = sorted(list(all_directors))  # Lista ordenada
+    unique_directors.insert(0, "Todos")
     
     # Listas desplegables para actor y director
-    selected_actor = st.sidebar.selectbox("Actor", [""] + unique_actors)
-    selected_director = st.sidebar.selectbox("Director", [""] + unique_directors)
+    selected_actor = st.sidebar.selectbox(
+        "Selecciona un Actor/Actriz:",
+        options=unique_actors,
+        index=0,
+        help="Escribe para buscar un actor o actriz del reparto."
+    )
+    selected_director = st.sidebar.selectbox(
+        "Selecciona un Director:",
+        options=unique_directors,
+        index=0,
+        help="Escribe para buscar al director de tu preferencia."
+    )
     
     # Slider para Tomatometer
     selected_tomatometer = st.sidebar.slider("Puntuación mínima en Tomatometer", 0, 100, 50)
 
     # Película de referencia
     movie_titles = sorted(movies_clean["movie_title"].unique())
-    selected_movie = st.selectbox("Selecciona una película de referencia", [""] + movie_titles)
+    ##selected_movie = st.selectbox("Selecciona una película de referencia", [""] + movie_titles)
+    lista_peliculas = sorted(movies["movie_title"].unique())
+    selected_movie = st.selectbox(
+        "🔍 Escribe o selecciona una película de referencia:",
+        options=lista_peliculas,
+        index=0,  # Película por defecto (la primera de la lista)
+        help="Empieza a escribir el nombre de la película que te guste para buscarla."
+        )
     
     # Pesos para la recomendación
     st.sidebar.header("Ajustes del Modelo")
@@ -230,7 +261,7 @@ if pipeline is not None and movies is not None:
                         if poster_url and poster_url != "N/A":
                             st.image(poster_url, use_container_width=True)
                         else:
-                            placeholder_url = "https://placehold.co/200x300?text=No+Image"
+                            placeholder_url = "https://dummyimage.com/200x300/2e2e2e/ffffff.png&text=No+Image"
                             st.image(placeholder_url, use_container_width=True)
 
                         metric_col1, metric_col2 = st.columns(2)

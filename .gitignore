@@ -6,3 +6,13 @@ __pycache__
 /data/interim/
 /data/raw/
 /data/kaggle.json
+
+.venv/
+venv/
+env/
+
+.streamlit/
+.ipynb_checkpoints/
+
+.DS_Store
+Thumbs.db
