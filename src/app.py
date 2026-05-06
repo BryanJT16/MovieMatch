@@ -28,33 +28,49 @@ st.set_page_config(
 st.title("🎬 Sistema de Recomendación de Películas")
 st.markdown("### Encuentra tu próxima película favorita")
 
-# Cargar el modelo y los datos
-@st.cache_data
-def cargar_datos():
+@st.cache_resource
+def cargar_modelo():
     try:
-        # 1. Obtener la ruta absoluta de la carpeta donde está "app.py" (ej. .../MovieMatch/src/)
-        dir_actual = os.path.dirname(os.path.abspath(__file__))
+        # Detectar directorio de app.py
+        dir_actual = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
         
-        # 2. Subir un nivel para llegar a la raíz (ej. .../MovieMatch/)
-        raiz_proyecto = os.path.abspath(os.path.join(dir_actual, ".."))
-        
-        # 3. Construir las rutas exactas sin importar el sistema operativo (Windows/Linux)
-        ruta_modelo = os.path.join(raiz_proyecto, "models", "rotten_pipeline.pkl")
-        ruta_movies = os.path.join(raiz_proyecto, "src/dataset", "movies.csv")
-        
-        # Cargar el pipeline
+        # Si ejecutamos desde la raíz (Render), la ruta es: raíz/src/models/rotten_pipeline.pkl
+        if os.path.basename(dir_actual) != "src":
+            ruta_modelo = os.path.join(dir_actual, "src", "model", "rotten_pipeline.pkl")
+        else:
+            # Si ejecutamos localmente desde dentro de src/, la ruta es: src/models/rotten_pipeline.pkl
+            ruta_modelo = os.path.join(dir_actual, "model", "rotten_pipeline.pkl")
+            
         with open(ruta_modelo, "rb") as f:
             pipeline = pickle.load(f)
-        
-        # Cargar el dataset de películas
-        movies = pd.read_csv(ruta_movies)
-        
-        return pipeline, movies
+        return pipeline
     except Exception as e:
-        st.error(f"Error al cargar los datos: {str(e)}")
-        return None, None
+        st.error(f"Error al cargar el modelo (.pkl): {str(e)}")
+        return None
 
-pipeline, movies = cargar_datos()
+
+@st.cache_data
+def cargar_dataset():
+    try:
+        # Detectar directorio de app.py
+        dir_actual = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
+        
+        # Si ejecutamos desde la raíz (Render), la ruta es: raíz/src/dataset/movies.csv
+        if os.path.basename(dir_actual) != "src":
+            ruta_movies = os.path.join(dir_actual, "src", "dataset", "movies.csv")
+        else:
+            # Si ejecutamos localmente desde dentro de src/, la ruta es: src/dataset/movies.csv
+            ruta_movies = os.path.join(dir_actual, "dataset", "movies.csv")
+            
+        movies = pd.read_csv(ruta_movies)
+        return movies
+    except Exception as e:
+        st.error(f"Error al cargar las películas (.csv): {str(e)}")
+        return None
+
+# Ejecutar las cargas asignando a tus variables de siempre
+pipeline = cargar_modelo()
+movies = cargar_dataset()
 
 
 def obtener_poster(titulo):
@@ -211,7 +227,7 @@ if pipeline is not None and movies is not None:
             movies_clean["actors"] + " " +
             movies_clean["movie_info"]
         )
-        vectorizer = TfidfVectorizer(stop_words="english", max_features=5000, ngram_range=(1,2))
+        vectorizer = TfidfVectorizer(stop_words="english", max_features=2000, ngram_range=(1,2))
         tfidf_matrix = vectorizer.fit_transform(movies_clean["combined_features"])
 
         if not selected_movie:
