@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
 import os
-import psutil
 import pickle
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
-import ast
 import requests
 import urllib.parse
+import numpy as np
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 api_key = "fa1b7162"
@@ -29,87 +28,73 @@ st.markdown("### Encuentra tu próxima película favorita")
 
 
 # ==========================================
-# MEMORIA
-# ==========================================
-
-def medir_ram(etapa=""):
-    proceso = psutil.Process(os.getpid())
-    ram_mb = proceso.memory_info().rss / (1024 * 1024)
-    st.sidebar.write(f"📊 **RAM en {etapa}:** {ram_mb:.2f} MB")
-
-
-st.sidebar.markdown("### 🖥️ Diagnóstico de Memoria")
-medir_ram("Inicio App")
-
-
-# ==========================================
 # PATHS
 # ==========================================
 
 def get_base_dir():
-    dir_actual = (
+
+    current = (
         os.path.dirname(os.path.abspath(__file__))
-        if "__file__" in locals()
+        if "__file__" in globals()
         else os.getcwd()
     )
 
-    if os.path.basename(dir_actual) != "src":
-        return os.path.join(dir_actual, "src")
+    if os.path.basename(current) != "src":
+        return os.path.join(current, "src")
 
-    return dir_actual
+    return current
 
 
 BASE_DIR = get_base_dir()
 
 
 # ==========================================
-# CARGA MODELO
+# MODELO
 # ==========================================
 
 @st.cache_resource
 def cargar_modelo():
 
-    ruta_modelo = os.path.join(
+    path = os.path.join(
         BASE_DIR,
         "model",
         "rotten_pipeline.pkl"
     )
 
-    with open(ruta_modelo, "rb") as f:
+    with open(path, "rb") as f:
         return pickle.load(f)
 
 
 # ==========================================
-# CARGA DATASET
+# DATASET
 # ==========================================
 
-@st.cache_data
+@st.cache_resource
 def cargar_dataset():
 
-    ruta_movies = os.path.join(
+    path = os.path.join(
         BASE_DIR,
         "dataset",
         "movies.csv"
     )
 
-    columnas = [
-        'movie_title',
-        'genres',
-        'actors',
-        'directors',
-        'tomatometer_rating',
-        'movie_info',
-        'critics_consensus',
-        'release_year'
+    cols = [
+        "movie_title",
+        "genres",
+        "actors",
+        "directors",
+        "tomatometer_rating",
+        "movie_info",
+        "critics_consensus",
+        "release_year"
     ]
 
-    movies = pd.read_csv(
-        ruta_movies,
-        usecols=columnas
+    df = pd.read_csv(
+        path,
+        usecols=cols
     )
 
-    # Limpieza una sola vez
-    string_cols = [
+    text_cols = [
         "genres",
         "actors",
         "directors",
@@ -117,73 +102,59 @@ def cargar_dataset():
         "critics_consensus"
     ]
 
-    for col in string_cols:
-        movies[col] = movies[col].fillna("")
+    for col in text_cols:
+        df[col] = df[col].fillna("")
 
-    movies["release_year"] = (
+    df["release_year"] = (
         pd.to_numeric(
-            movies["release_year"],
+            df["release_year"],
             errors="coerce"
         )
         .fillna(0)
         .astype(int)
     )
 
-    movies["tomatometer_rating"] = (
+    df["tomatometer_rating"] = (
         pd.to_numeric(
-            movies["tomatometer_rating"],
+            df["tomatometer_rating"],
             errors="coerce"
         )
         .fillna(0)
         .astype(int)
     )
 
-    return movies
-
-
-pipeline = cargar_modelo()
-movies = cargar_dataset()
-
-medir_ram("Datos cargados")
+    return df
 
 
 # ==========================================
-# TFIDF (SOLO UNA VEZ)
+# TFIDF
 # ==========================================
 
 @st.cache_resource
 def cargar_tfidf(df):
 
-    # Solo metadata corta
-    combined_features = (
-        df["genres"].astype(str)
+    features = (
+        df["genres"]
         + " "
-        + df["directors"].astype(str)
+        + df["directors"]
     )
 
     vectorizer = TfidfVectorizer(
         stop_words="english",
         max_features=150,
-        ngram_range=(1,1)
+        ngram_range=(1, 1)
     )
 
-    tfidf_matrix = vectorizer.fit_transform(
-        combined_features
+    return vectorizer.fit_transform(
+        features
     )
-
-    return tfidf_matrix
-
-
-tfidf_matrix = cargar_tfidf(movies)
-
-medir_ram("TFIDF cargado")
 
 
 # ==========================================
-# SENTIMIENTO (SOLO UNA VEZ)
+# SENTIMIENTOS
 # ==========================================
 
-@st.cache_data
+@st.cache_resource
 def cargar_sentimientos():
 
     return pipeline.predict_proba(
@@ -191,122 +162,66 @@ def cargar_sentimientos():
     )[:, 1]
 
 
-sentiment_probs = cargar_sentimientos()
-
-medir_ram("Sentimientos cargados")
-
-
 # ==========================================
-# FILTROS
+# UI DATA
 # ==========================================
 
 @st.cache_data
-def procesar_filtros(df):
+def preparar_ui(df):
 
-    all_genres = []
-
-    for genres in df["genres"]:
-
-        genres_str = (
-            genres
-            .replace("[", "")
-            .replace("]", "")
-            .replace("'", "")
-        )
-
-        all_genres.extend(
-            [
-                g.strip()
-                for g in genres_str.split(",")
-                if g.strip()
-            ]
-        )
-
-    unique_genres = sorted(
-        list(set(all_genres))
+    titles = sorted(
+        df["movie_title"].unique()
     )
 
-    unique_actors = set()
-    unique_directors = set()
-
-    for val in df["actors"]:
-        val = (
-            val
+    genres = sorted(
+        set(
+            g.strip()
+            for row in df["genres"]
+            for g in row
             .replace("[", "")
             .replace("]", "")
             .replace("'", "")
+            .split(",")
+            if g.strip()
         )
+    )
 
-        unique_actors.update(
-            [
-                x.strip()
-                for x in val.split(",")
-                if x.strip()
-            ]
-        )
-
-    for val in df["directors"]:
-        val = (
-            val
-            .replace("[", "")
-            .replace("]", "")
-            .replace("'", "")
-        )
-
-        unique_directors.update(
-            [
-                x.strip()
-                for x in val.split(",")
-                if x.strip()
-            ]
-        )
-
-    years = movies["release_year"]
+    years = df["release_year"]
     years = years[years > 0]
 
     return (
-        unique_genres,
-        ["Todos"] + sorted(unique_actors),
-        ["Todos"] + sorted(unique_directors),
+        titles,
+        genres,
         int(years.min()),
         int(years.max())
     )
 
 
-(
-    unique_genres,
-    unique_actors,
-    unique_directors,
-    min_year,
-    max_year
-) = procesar_filtros(movies)
-
-
 # ==========================================
-# POSTERS CACHEADOS
+# POSTERS
 # ==========================================
 
-@st.cache_data
-def obtener_poster(titulo):
+@st.cache_data(ttl=3600)
+def obtener_poster(title):
 
     try:
 
-        titulo_encoded = urllib.parse.quote(
-            titulo
+        title = urllib.parse.quote(
+            title
         )
 
         url = (
             f"http://www.omdbapi.com/"
-            f"?t={titulo_encoded}"
+            f"?t={title}"
             f"&apikey={api_key}"
         )
 
-        response = requests.get(
+        r = requests.get(
             url,
             timeout=2
         )
 
-        data = response.json()
+        data = r.json()
 
         if data.get("Response") == "True":
             return data.get("Poster")
@@ -318,10 +233,25 @@ def obtener_poster(titulo):
 
 
 # ==========================================
-# UI
+# LOAD
 # ==========================================
 
-st.sidebar.header("Filtros")
+pipeline = cargar_modelo()
+movies = cargar_dataset()
+tfidf_matrix = cargar_tfidf(movies)
+sentiment_probs = cargar_sentimientos()
+
+(
+    movie_titles,
+    unique_genres,
+    min_year,
+    max_year
+) = preparar_ui(movies)
+
+
+# ==========================================
+# UI
+# ==========================================
 
 selected_genres = st.sidebar.multiselect(
     "Géneros",
@@ -335,16 +265,6 @@ year_range = st.sidebar.slider(
     (min_year, max_year)
 )
 
-selected_actor = st.sidebar.selectbox(
-    "Actor",
-    unique_actors
-)
-
-selected_director = st.sidebar.selectbox(
-    "Director",
-    unique_directors
-)
-
 selected_tomatometer = st.sidebar.slider(
     "Tomatometer mínimo",
     0,
@@ -354,11 +274,8 @@ selected_tomatometer = st.sidebar.slider(
 
 selected_movie = st.selectbox(
     "Película referencia",
-    sorted(movies["movie_title"].unique())
+    movie_titles
 )
-
-
-st.sidebar.header("Pesos")
 
 alpha = st.sidebar.slider(
     "Película",
@@ -390,173 +307,79 @@ top_n = st.sidebar.number_input(
 
 
 # ==========================================
-# RECOMENDADOR
+# RECOMENDAR
 # ==========================================
 
 def recomendar():
 
-    medir_ram("Inicio recomendación")
-    st.sidebar.write("🔍 1. Entró en recomendar()")
+    match_score = np.zeros(
+        len(movies)
+    )
 
-    match_score = np.zeros(len(movies))
-    st.sidebar.write("✅ 2. match_score creado")
-
-    # ==========================
-    # GÉNEROS
-    # ==========================
     if selected_genres:
 
-        genre_mask = movies["genres"].apply(
+        match_score += movies[
+            "genres"
+        ].apply(
             lambda x: sum(
                 g in x
                 for g in selected_genres
             )
         )
 
-        match_score += genre_mask
-
-    st.sidebar.write("✅ 3. Géneros procesados")
-    medir_ram("Tras géneros")
-
-
-    # ==========================
-    # ACTOR
-    # ==========================
-    if selected_actor != "Todos":
-
-        match_score += np.where(
-            movies["actors"].str.contains(
-                selected_actor,
-                regex=False
-            ),
-            2,
-            0
-        )
-
-    st.sidebar.write("✅ 4. Actor procesado")
-    medir_ram("Tras actor")
-
-
-    # ==========================
-    # DIRECTOR
-    # ==========================
-    if selected_director != "Todos":
-
-        match_score += np.where(
-            movies["directors"].str.contains(
-                selected_director,
-                regex=False
-            ),
-            2,
-            0
-        )
-
-    st.sidebar.write("✅ 5. Director procesado")
-    medir_ram("Tras director")
-
-
-    # ==========================
-    # AÑOS
-    # ==========================
     match_score += np.where(
         (
-            movies["release_year"] >= year_range[0]
+            movies["release_year"]
+            >= year_range[0]
         )
         &
         (
-            movies["release_year"] <= year_range[1]
+            movies["release_year"]
+            <= year_range[1]
         ),
         1,
         0
     )
 
-    st.sidebar.write("✅ 6. Años procesados")
-
-
-    # ==========================
-    # TOMATOMETER
-    # ==========================
     match_score += np.where(
         (
-            movies["tomatometer_rating"]
+            movies[
+                "tomatometer_rating"
+            ]
             >= selected_tomatometer
         ),
         1,
         0
     )
 
-    st.sidebar.write("✅ 7. Tomatometer procesado")
-
-
-    # ==========================
-    # NORMALIZACIÓN
-    # ==========================
     if match_score.max() > 0:
 
-        match_norm = (
+        match_score = (
             match_score
             / match_score.max()
         )
 
-    else:
-
-        match_norm = match_score
-
-    st.sidebar.write("✅ 8. Normalización hecha")
-
-
-    # ==========================
-    # SENTIMIENTO
-    # ==========================
     sentiment_norm = (
         sentiment_probs
         / sentiment_probs.max()
     )
 
-    st.sidebar.write("✅ 9. Sentimiento listo")
-
-
-    # ==========================
-    # PELÍCULA REFERENCIA
-    # ==========================
     idx = movies[
         movies["movie_title"]
         == selected_movie
     ].index[0]
-
-    st.sidebar.write("✅ 10. Índice película encontrado")
-
-
-    # ==========================
-    # COSINE SIMILARITY
-    # ==========================
-    st.sidebar.write("⏳ 11. Calculando cosine_similarity...")
-    medir_ram("Antes cosine")
 
     cosine_sim = cosine_similarity(
         tfidf_matrix[idx],
         tfidf_matrix
     ).flatten()
 
-    st.sidebar.write("✅ 12. cosine_similarity terminado")
-    medir_ram("Después cosine")
-
-
-    # ==========================
-    # SCORE FINAL
-    # ==========================
     final_score = (
         alpha * cosine_sim
-        + beta * match_norm
+        + beta * match_score
         + gamma * sentiment_norm
     )
 
-    st.sidebar.write("✅ 13. Score final")
-
-
-    # ==========================
-    # TOP N
-    # ==========================
     indices = final_score.argsort()[::-1]
 
     indices = [
@@ -565,81 +388,58 @@ def recomendar():
         if i != idx
     ][:top_n]
 
-    st.sidebar.write("✅ 14. Top N calculado")
-
-
-    # ==========================
-    # RESULTADO
-    # ==========================
-    resultado = movies.iloc[
-        indices
-    ].copy()
-
-    resultado[
-        "sentiment"
-    ] = sentiment_norm[
+    result = movies.iloc[
         indices
     ]
 
-    st.sidebar.write("✅ 15. Resultado listo")
-    medir_ram("Fin recomendación")
+    result["sentiment"] = (
+        sentiment_norm[
+            indices
+        ]
+    )
 
-    return resultado
+    return result
 
 
 # ==========================================
-# BOTON
+# BUTTON
 # ==========================================
 
 if st.button(
     "Obtener Recomendaciones"
 ):
 
-    with st.spinner(
-        "Generando..."
+    recommendations = recomendar()
+
+    for _, movie in (
+        recommendations
+        .iterrows()
     ):
 
-        recommendations = recomendar()
+        poster = obtener_poster(
+            movie["movie_title"]
+        )
 
-        for _, movie in (
-            recommendations
-            .iterrows()
-        ):
+        col1, col2 = st.columns(
+            [1, 3]
+        )
 
-            poster = obtener_poster(
+        with col1:
+
+            if poster:
+                st.image(
+                    poster,
+                    use_container_width=True
+                )
+
+        with col2:
+
+            st.subheader(
                 movie["movie_title"]
             )
 
-            col1, col2 = st.columns(
-                [1, 3]
+            st.write(
+                movie["movie_info"]
             )
 
-            with col1:
-
-                if poster:
-                    st.image(
-                        poster,
-                        use_container_width=True
-                    )
-
-            with col2:
-
-                st.subheader(
-                    movie["movie_title"]
-                )
-
-                st.write(
-                    f"Tomatometer: "
-                    f"{movie['tomatometer_rating']}%"
-                )
-
-                st.write(
-                    f"Sentimiento: "
-                    f"{movie['sentiment']:.2f}"
-                )
-
-                st.write(
-                    movie["movie_info"]
-                )
-
-            st.divider()
+        st.divider()
