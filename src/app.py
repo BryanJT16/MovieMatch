@@ -154,20 +154,17 @@ medir_ram("Datos cargados")
 @st.cache_resource
 def cargar_tfidf(df):
 
+    # Solo metadata corta
     combined_features = (
-        df["genres"]
+        df["genres"].astype(str)
         + " "
-        + df["directors"]
-        + " "
-        + df["actors"]
-        + " "
-        + df["movie_info"]
+        + df["directors"].astype(str)
     )
 
     vectorizer = TfidfVectorizer(
         stop_words="english",
-        max_features=1000,
-        ngram_range=(1, 2)
+        max_features=150,
+        ngram_range=(1,1)
     )
 
     tfidf_matrix = vectorizer.fit_transform(
@@ -399,11 +396,14 @@ top_n = st.sidebar.number_input(
 def recomendar():
 
     medir_ram("Inicio recomendación")
+    st.sidebar.write("🔍 1. Entró en recomendar()")
 
-    match_score = np.zeros(
-        len(movies)
-    )
+    match_score = np.zeros(len(movies))
+    st.sidebar.write("✅ 2. match_score creado")
 
+    # ==========================
+    # GÉNEROS
+    # ==========================
     if selected_genres:
 
         genre_mask = movies["genres"].apply(
@@ -415,6 +415,13 @@ def recomendar():
 
         match_score += genre_mask
 
+    st.sidebar.write("✅ 3. Géneros procesados")
+    medir_ram("Tras géneros")
+
+
+    # ==========================
+    # ACTOR
+    # ==========================
     if selected_actor != "Todos":
 
         match_score += np.where(
@@ -426,6 +433,13 @@ def recomendar():
             0
         )
 
+    st.sidebar.write("✅ 4. Actor procesado")
+    medir_ram("Tras actor")
+
+
+    # ==========================
+    # DIRECTOR
+    # ==========================
     if selected_director != "Todos":
 
         match_score += np.where(
@@ -437,20 +451,31 @@ def recomendar():
             0
         )
 
+    st.sidebar.write("✅ 5. Director procesado")
+    medir_ram("Tras director")
+
+
+    # ==========================
+    # AÑOS
+    # ==========================
     match_score += np.where(
         (
-            movies["release_year"]
-            >= year_range[0]
+            movies["release_year"] >= year_range[0]
         )
         &
         (
-            movies["release_year"]
-            <= year_range[1]
+            movies["release_year"] <= year_range[1]
         ),
         1,
         0
     )
 
+    st.sidebar.write("✅ 6. Años procesados")
+
+
+    # ==========================
+    # TOMATOMETER
+    # ==========================
     match_score += np.where(
         (
             movies["tomatometer_rating"]
@@ -460,42 +485,92 @@ def recomendar():
         0
     )
 
+    st.sidebar.write("✅ 7. Tomatometer procesado")
+
+
+    # ==========================
+    # NORMALIZACIÓN
+    # ==========================
     if match_score.max() > 0:
+
         match_norm = (
             match_score
             / match_score.max()
         )
+
     else:
+
         match_norm = match_score
 
+    st.sidebar.write("✅ 8. Normalización hecha")
+
+
+    # ==========================
+    # SENTIMIENTO
+    # ==========================
     sentiment_norm = (
         sentiment_probs
         / sentiment_probs.max()
     )
 
+    st.sidebar.write("✅ 9. Sentimiento listo")
+
+
+    # ==========================
+    # PELÍCULA REFERENCIA
+    # ==========================
     idx = movies[
         movies["movie_title"]
         == selected_movie
     ].index[0]
+
+    st.sidebar.write("✅ 10. Índice película encontrado")
+
+
+    # ==========================
+    # COSINE SIMILARITY
+    # ==========================
+    st.sidebar.write("⏳ 11. Calculando cosine_similarity...")
+    medir_ram("Antes cosine")
 
     cosine_sim = cosine_similarity(
         tfidf_matrix[idx],
         tfidf_matrix
     ).flatten()
 
+    st.sidebar.write("✅ 12. cosine_similarity terminado")
+    medir_ram("Después cosine")
+
+
+    # ==========================
+    # SCORE FINAL
+    # ==========================
     final_score = (
         alpha * cosine_sim
         + beta * match_norm
         + gamma * sentiment_norm
     )
 
+    st.sidebar.write("✅ 13. Score final")
+
+
+    # ==========================
+    # TOP N
+    # ==========================
     indices = final_score.argsort()[::-1]
+
     indices = [
         i
         for i in indices
         if i != idx
     ][:top_n]
 
+    st.sidebar.write("✅ 14. Top N calculado")
+
+
+    # ==========================
+    # RESULTADO
+    # ==========================
     resultado = movies.iloc[
         indices
     ].copy()
@@ -505,6 +580,9 @@ def recomendar():
     ] = sentiment_norm[
         indices
     ]
+
+    st.sidebar.write("✅ 15. Resultado listo")
+    medir_ram("Fin recomendación")
 
     return resultado
 
