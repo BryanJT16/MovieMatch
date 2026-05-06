@@ -5,8 +5,7 @@ import pickle
 import requests
 import urllib.parse
 import numpy as np
-import psutil  # Para el monitoreo de RAM
-import gc      # Para la limpieza de basura
+import gc      # Mantenemos esto para estabilidad interna
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -14,7 +13,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 api_key = "fa1b7162"
 
 # ==========================================
-# CONFIGURACIÓN Y DIAGNÓSTICO
+# CONFIGURACIÓN DE LA PÁGINA
 # ==========================================
 
 st.set_page_config(
@@ -22,15 +21,6 @@ st.set_page_config(
     page_icon="🎬",
     layout="wide"
 )
-
-def medir_ram(etapa=""):
-    """Muestra el consumo de RAM en la barra lateral."""
-    proceso = psutil.Process(os.getpid())
-    ram_mb = proceso.memory_info().rss / (1024 * 1024)
-    st.sidebar.write(f"📊 **RAM en {etapa}:** {ram_mb:.2f} MB")
-
-st.sidebar.markdown("### 🖥️ Diagnóstico de Memoria")
-medir_ram("Inicio de la App")
 
 st.title("🎬 Sistema de Recomendación de Películas")
 st.markdown("### Encuentra tu próxima película favorita")
@@ -74,7 +64,7 @@ def cargar_dataset():
     for col in text_cols:
         df[col] = df[col].fillna("")
 
-    # Downcasting para ahorrar RAM
+    # Tipos de datos optimizados para Render
     df["release_year"] = pd.to_numeric(df["release_year"], errors="coerce").fillna(0).astype(np.int16)
     df["tomatometer_rating"] = pd.to_numeric(df["tomatometer_rating"], errors="coerce").fillna(0).astype(np.int16)
     
@@ -83,7 +73,6 @@ def cargar_dataset():
 
 @st.cache_resource
 def cargar_tfidf(df):
-    # Solo géneros y directores para mantener la matriz pequeña en Render
     features = df["genres"] + " " + df["directors"]
     vectorizer = TfidfVectorizer(
         stop_words="english",
@@ -96,13 +85,12 @@ def cargar_tfidf(df):
 
 @st.cache_resource
 def cargar_sentimientos(_pipeline, _df):
-    # Pre-calculamos para evitar llamar al modelo en cada recomendación
     probs = _pipeline.predict_proba(_df["critics_consensus"])[:, 1]
     gc.collect()
     return probs
 
 # ==========================================
-# UI DATA Y POSTERS
+# DATOS DE INTERFAZ Y PÓSTERS
 # ==========================================
 
 @st.cache_data
@@ -132,7 +120,7 @@ def obtener_poster(title):
     return None
 
 # ==========================================
-# CARGA INICIAL DE DATOS
+# INICIALIZACIÓN
 # ==========================================
 
 pipeline = cargar_modelo()
@@ -142,73 +130,63 @@ sentiment_probs = cargar_sentimientos(pipeline, movies)
 
 (movie_titles, unique_genres, min_year, max_year) = preparar_ui(movies)
 
-medir_ram("Recursos cargados")
-
 # ==========================================
-# INTERFAZ DE USUARIO (SIDEBAR)
+# BARRA LATERAL (FILTROS)
 # ==========================================
 
-selected_genres = st.sidebar.multiselect("Filtrar por Géneros", unique_genres)
-year_range = st.sidebar.slider("Rango de Años", min_year, max_year, (min_year, max_year))
+st.sidebar.header("Filtros")
+selected_genres = st.sidebar.multiselect("Géneros", unique_genres)
+year_range = st.sidebar.slider("Años", min_year, max_year, (min_year, max_year))
 selected_tomatometer = st.sidebar.slider("Tomatometer mínimo", 0, 100, 50)
 
 st.sidebar.header("Pesos de Recomendación")
-alpha = st.sidebar.slider("Peso de Película de Referencia", 0.0, 1.0, 0.7)
-beta = st.sidebar.slider("Peso de Filtros", 0.0, 1.0, 0.2)
-gamma = st.sidebar.slider("Sentimiento Crítico", 0.0, 1.0, 0.1)
-top_n = st.sidebar.number_input("Cantidad de resultados", 1, 20, 5)
+alpha = st.sidebar.slider("Importancia Película", 0.0, 1.0, 0.7)
+beta = st.sidebar.slider("Importancia Filtros", 0.0, 1.0, 0.2)
+gamma = st.sidebar.slider("Importancia Crítica", 0.0, 1.0, 0.1)
 
-selected_movie = st.selectbox("Selecciona una película que te guste:", movie_titles)
+top_n = st.sidebar.number_input("Resultados a mostrar", 1, 20, 5)
+
+selected_movie = st.selectbox("Basado en la película:", movie_titles)
 
 # ==========================================
 # LÓGICA DE RECOMENDACIÓN
 # ==========================================
 
 def recomendar():
-    medir_ram("Procesando recomendación")
-    
-    # Puntaje por filtros (Vectorizado)
     match_score = np.zeros(len(movies), dtype=np.float32)
 
     if selected_genres:
-        # Puntuación basada en cuántos de los géneros seleccionados coinciden
         match_score += movies["genres"].apply(lambda x: sum(g in x for g in selected_genres))
 
-    # Filtros binarios (Año y Rating)
     match_score += np.where((movies["release_year"] >= year_range[0]) & 
                             (movies["release_year"] <= year_range[1]), 0.5, 0)
     match_score += np.where(movies["tomatometer_rating"] >= selected_tomatometer, 0.5, 0)
 
-    # Normalización
     if match_score.max() > 0:
         match_score /= match_score.max()
 
-    # Sentimiento (Ya pre-calculado)
     sentiment_norm = sentiment_probs / sentiment_probs.max() if sentiment_probs.max() > 0 else sentiment_probs
 
-    # Similitud de Coseno (TF-IDF)
     idx = movies[movies["movie_title"] == selected_movie].index[0]
     cosine_sim = cosine_similarity(tfidf_matrix[idx], tfidf_matrix).flatten()
 
-    # Score Final
     final_score = (alpha * cosine_sim) + (beta * match_score) + (gamma * sentiment_norm)
 
-    # Obtener Top N
     indices = final_score.argsort()[::-1]
     indices = [i for i in indices if i != idx][:top_n]
 
     result = movies.iloc[indices].copy()
     result["sentiment"] = sentiment_norm[indices]
     
-    gc.collect() # Limpiar temporales del cálculo
+    gc.collect()
     return result
 
 # ==========================================
-# EJECUCIÓN
+# RESULTADOS
 # ==========================================
 
-if st.button("Obtener Recomendaciones"):
-    with st.spinner("Calculando mejores opciones..."):
+if st.button("🚀 Obtener Recomendaciones"):
+    with st.spinner("Calculando..."):
         recommendations = recomendar()
         
         for _, movie in recommendations.iterrows():
@@ -216,10 +194,12 @@ if st.button("Obtener Recomendaciones"):
             col1, col2 = st.columns([1, 3])
 
             with col1:
+                # Lógica de póster con imagen de sustitución
                 if poster and poster != "N/A":
                     st.image(poster, use_container_width=True)
                 else:
-                    st.image("https://dummyimage.com/200x300/2e2e2e/ffffff.png&text=Sin+Poster", use_container_width=True)
+                    placeholder = "https://dummyimage.com/200x300/2e2e2e/ffffff.png&text=Sin+Poster"
+                    st.image(placeholder, use_container_width=True)
                 
                 m1, m2 = st.columns(2)
                 m1.metric("Tomatometer", f"{int(movie['tomatometer_rating'])}%")
@@ -230,8 +210,7 @@ if st.button("Obtener Recomendaciones"):
                 if movie["movie_info"]:
                     st.write(f"**Sinopsis:** {movie['movie_info']}")
                 if movie["critics_consensus"]:
-                    st.write(f"**Consenso:** {movie['critics_consensus']}")
+                    st.write(f"**Consenso Crítico:** {movie['critics_consensus']}")
             st.divider()
         
-        medir_ram("Post-Recomendación")
         gc.collect()
